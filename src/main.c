@@ -32,53 +32,105 @@ char morse_message[257];
 
 int morse_index = 0;
 
+int measrement_device_index = 1;
+
+int16_t sample_buffer[MEMS_BUFFER_SIZE];
+int16_t temp_sample_buffer[MEMS_BUFFER_SIZE];//use to have two different buffers.z
+volatile int samples_read = 0;
+
+static void on_sound_buffer_ready(){
+    samples_read = get_microphone_samples(sample_buffer, MEMS_BUFFER_SIZE);
+}
+
+static void read_mic() {
+    if (init_microphone_sampling()<0){
+        sleep_ms(500);
+        printf("Cannot start sampling the microphone\n");
+    
+    end_microphone_sampling();
+    get_microphone_samples(sample_buffer, MEMS_BUFFER_SIZE);
+    for (int i = 0; i < sample_count; i++) {
+        printf("%d\n", temp_sample_buffer[i]);
+        sent_bytes += sizeof(temp_sample_buffer[0]);
+    }
+    }
+}
+
+static void read_accelerometer() {
+    float ax, ay, az, gx, gy, gz, t;
+
+    if (ICM42670_read_sensor_data(&ax, &ay, &az, &gx, &gy, &gz, &t) == 0)
+    {
+        if (az > 0.1) {
+            printf("UP: %.2fg)\n", az); // delete after testing
+            current_morse = '.';
+        }
+        else if (az < -0.1) {
+            printf("DOWN: %.2fg)\n", az); // delete after testing
+            current_morse = '-';
+        }
+        
+    }
+}
+
+
+
+
 static void read_sensor(void *arg) {
     printf("read_sensor started %d\n", lower_state);
     (void) arg;
     
     while(1) {
         if (lower_state == WAITING) {
-
-            float ax, ay, az, gx, gy, gz, t;
-
-            // init_ICM42670();
-
-            ICM42670_start_with_default_values();
-
-            if (ICM42670_read_sensor_data(&ax, &ay, &az, &gx, &gy, &gz, &t) == 0)
-            {
-                if (az > 0.1) {
-                    printf("UP: %.2fg)\n", az); // delete after testing
-                    current_morse = '.';
-                }
-                else if (az < -0.1) {
-                    printf("DOWN: %.2fg)\n", az); // delete after testing
-                    current_morse = '-';
-                }
-                printf("lower state changed\n");
-                lower_state = WRITE_TO_MEMORY;
+            switch (measrement_device_index) {
+                case 1:
+                    read_accelerometer();
+                    break;
+                case 2:
+                    read_mic();
+                    break;
+        
+        printf("lower state changed\n");
+        lower_state = WRITE_TO_MEMORY;
+                
+        vTaskDelay(pdMS_TO_TICKS(1000)); 
             }
-
-            vTaskDelay(pdMS_TO_TICKS(1000)); 
         }
     }
 }
 
-static void read_button() {
+
+
+
+
+
+
+
+static void read_button(void *arg) {
     printf("read_button started %d\n", lower_state);
+    (void) arg;
     while (1) {
         if (lower_state == WRITE_TO_MEMORY) {
             printf("passed state check \n");
-            if (current_morse != '\0' && morse_index < 257) 
-            {
-                morse_message[morse_index++] = current_morse;
-                morse_message[morse_index] = '\0'; /// keep string terminated
-                printf("Stored: %c | Buffer: %s\n", current_morse, morse_message); /// only for testing
+            if (BUTTON1 != 0){   /// Writes the character to the message, if character is valid
+                if (current_morse != '\0' && morse_index < 257) 
+                {
+                    morse_message[morse_index++] = current_morse;
+                    morse_message[morse_index] = '\0'; /// 
+                    printf("Stored: %c | Entire message: %s\n", current_morse, morse_message); /// only for testing
+                }
             }
-
+            else if (BUTTON2 != 0)
+            {
+                morse_message[morse_index++] = " ";
+                morse_message[morse_index] = '\0'; /// 
+                printf("Stored: %c | Entire message: %s\n", current_morse, morse_message); /// only for testing               
+            }
+            
+                
             current_morse = '\0';
             lower_state = WAITING;  /// Ready for next motion
-
+            vTaskDelay(pdMS_TO_TICKS(1000));
         }
     }
 
@@ -210,22 +262,16 @@ static void display_task(void *arg) {
 }
 
 
-static void example_task(void *arg){
-    (void)arg;
-
-    for(;;){
-        tight_loop_contents(); // Modify with application code here.
-        vTaskDelay(pdMS_TO_TICKS(2000));
-    }
-}
-
 int main() {
     stdio_init_all();
     // Uncomment this lines if you want to wait till the serial monitor is connected
     while (!stdio_usb_connected()){
         sleep_ms(10);
     } 
-    
+    /// start all components being used
+    ICM42670_start_with_default_values();
+    pdm_microphone_set_callback(on_sound_buffer_ready)
+
     printf("first print worked");
     init_hat_sdk();
     sleep_ms(300); //Wait some time so initialization of USB and hat is done.
